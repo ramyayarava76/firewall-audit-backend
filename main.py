@@ -1,8 +1,12 @@
+
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from config import settings
+from upload import router as upload_router
+
 
 app = FastAPI(title=settings.app_name, version=settings.app_version)
+app.include_router(upload_router, prefix="/api/v1")
 
 
 @app.get("/")
