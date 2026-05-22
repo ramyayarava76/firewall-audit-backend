@@ -1,5 +1,129 @@
 import re
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Set
+
+
+# ---------------------------------------------------------------------------
+# Known values
+# ---------------------------------------------------------------------------
+
+KNOWN_PROTOCOLS: Set[str] = {
+    "tcp", "udp", "icmp", "icmpv6", "esp", "ah", "gre", "ospf",
+    "ip", "ipv6", "sctp", "igmp", "pim", "eigrp", "http", "https",
+    "ftp", "ssh", "telnet", "dns", "smtp", "snmp", "bgp", "ldap",
+}
+
+WELL_KNOWN_PORTS: Dict[str, int] = {
+    "ftp": 21, "ssh": 22, "telnet": 23, "smtp": 25, "dns": 53,
+    "http": 80, "https": 443, "snmp": 161, "ldap": 389, "smb": 445,
+    "rdp": 3389, "mysql": 3306, "mssql": 1433, "oracle": 1521,
+    "postgresql": 5432, "redis": 6379, "mongodb": 27017,
+}
+
+# Regex patterns
+_IPV4_PATTERN = re.compile(
+    r"\b((?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?))"
+    r"(?:/(\d{1,2}))?\b"
+)
+_IPV4_CIDR_PATTERN = re.compile(
+    r"\b((?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)"
+    r"(?:/\d{1,2})?)\b"
+)
+_IPV6_PATTERN = re.compile(
+    r"\b((?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}"
+    r"|::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}"
+    r"|[0-9a-fA-F]{1,4}::(?:[0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}"
+    r"|(?:[0-9a-fA-F]{1,4}:){1,6}:)\b"
+)
+_PORT_PATTERN = re.compile(r"\b(6553[0-5]|655[0-2]\d|65[0-4]\d{2}|6[0-4]\d{3}|[1-5]\d{4}|[1-9]\d{0,3})\b")
+_PORT_RANGE_PATTERN = re.compile(r"\b(\d{1,5})-(\d{1,5})\b")
+
+
+# ---------------------------------------------------------------------------
+# Extraction helpers
+# ---------------------------------------------------------------------------
+
+def extract_ips(text: str) -> List[str]:
+    """Extract all IPv4 (with optional CIDR) and IPv6 addresses from *text*."""
+    ipv4 = _IPV4_CIDR_PATTERN.findall(text)
+    ipv6 = _IPV6_PATTERN.findall(text)
+    seen: set = set()
+    result: List[str] = []
+    for ip in ipv4 + ipv6:
+        if ip not in seen:
+            seen.add(ip)
+            result.append(ip)
+    return result
+
+
+def extract_ports(text: str) -> List[str]:
+    """
+    Extract port numbers and port ranges from *text*.
+
+    Returns strings like ``"443"``, ``"8080-8090"``, or named ports like
+    ``"http"`` when they appear as standalone protocol keywords.
+    """
+    result: List[str] = []
+    seen: set = set()
+
+    # Named ports (e.g. "eq http", "service https")
+    named_port_pattern = re.compile(
+        r"\b(?:eq|port|service|dport|sport)\s+(" + "|".join(WELL_KNOWN_PORTS.keys()) + r")\b",
+        re.IGNORECASE,
+    )
+    for match in named_port_pattern.finditer(text):
+        name = match.group(1).lower()
+        key = str(WELL_KNOWN_PORTS[name])
+        if key not in seen:
+            seen.add(key)
+            result.append(key)
+
+    # Numeric port ranges  (must come before single-port to avoid double-match)
+    for match in _PORT_RANGE_PATTERN.finditer(text):
+        low, high = int(match.group(1)), int(match.group(2))
+        if 1 <= low <= 65535 and 1 <= high <= 65535 and low < high:
+            key = f"{low}-{high}"
+            if key not in seen:
+                seen.add(key)
+                result.append(key)
+
+    # Numeric ports preceded by eq/port/dport/sport/service or a colon
+    numeric_port_pattern = re.compile(
+        r"(?:eq|port|dport|sport|service|:)\s*(\d{1,5})\b", re.IGNORECASE
+    )
+    for match in numeric_port_pattern.finditer(text):
+        val = int(match.group(1))
+        if 1 <= val <= 65535:
+            key = str(val)
+            if key not in seen:
+                seen.add(key)
+                result.append(key)
+
+    return result
+
+
+def extract_protocols(text: str) -> List[str]:
+    """Extract recognised protocol names from *text*."""
+    found: List[str] = []
+    seen: set = set()
+    lower = text.lower()
+    for proto in sorted(KNOWN_PROTOCOLS):
+        if re.search(rf"\b{re.escape(proto)}\b", lower):
+            if proto not in seen:
+                seen.add(proto)
+                found.append(proto)
+    return found
+
+
+def extract_network_objects(text: str) -> Dict[str, Any]:
+    """
+    Convenience wrapper that returns IPs, ports, and protocols extracted
+    from a raw rule / log line in a single call.
+    """
+    return {
+        "ips": extract_ips(text),
+        "ports": extract_ports(text),
+        "protocols": extract_protocols(text),
+    }
 
 
 def _clean_value(value: str) -> str:
@@ -182,15 +306,19 @@ def parse_rule(rule_line: str, vendor: Optional[str] = None) -> Dict[str, Any]:
     chosen_vendor = (vendor or detect_vendor(rule_line) or "unknown").lower()
 
     if chosen_vendor in {"palo", "paloalto", "palo_alto", "pan"}:
-        return parse_palo_alto_rule(rule_line)
-    if chosen_vendor in {"cisco", "asa", "ios"}:
-        return parse_cisco_rule(rule_line)
+        result = parse_palo_alto_rule(rule_line)
+    elif chosen_vendor in {"cisco", "asa", "ios"}:
+        result = parse_cisco_rule(rule_line)
+    else:
+        result = {
+            "vendor": "unknown",
+            "raw": rule_line,
+            "error": "Could not determine vendor. Pass vendor='palo_alto' or vendor='cisco'.",
+        }
 
-    return {
-        "vendor": "unknown",
-        "raw": rule_line,
-        "error": "Could not determine vendor. Pass vendor='palo_alto' or vendor='cisco'.",
-    }
+    # Attach extracted network objects (IPs, ports, protocols) to every result
+    result["extracted"] = extract_network_objects(rule_line)
+    return result
 
 
 def parse_rules(rule_lines: Iterable[str], vendor: Optional[str] = None) -> List[Dict[str, Any]]:
