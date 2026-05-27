@@ -3,10 +3,12 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from config import settings
 from upload import router as upload_router
+from audit import router as audit_router
 
 
 app = FastAPI(title=settings.app_name, version=settings.app_version)
 app.include_router(upload_router, prefix="/api/v1")
+app.include_router(audit_router, prefix="/api/v1")
 
 
 @app.get("/")
@@ -27,18 +29,6 @@ async def root():
 async def health_check():
     """Health check endpoint"""
     return JSONResponse({"status": "healthy"})
-
-
-@app.get("/api/v1/audit")
-async def get_audit_logs():
-    """Get firewall audit logs"""
-    return JSONResponse(
-        {
-            "audit_logs": [],
-            "total": 0
-        }
-    )
-
 
 if __name__ == "__main__":
     import uvicorn
