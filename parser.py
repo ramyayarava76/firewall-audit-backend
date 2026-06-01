@@ -20,10 +20,6 @@ WELL_KNOWN_PORTS: Dict[str, int] = {
 }
 
 # Regex patterns
-_IPV4_PATTERN = re.compile(
-    r"\b((?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?))"
-    r"(?:/(\d{1,2}))?\b"
-)
 _IPV4_CIDR_PATTERN = re.compile(
     r"\b((?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)"
     r"(?:/\d{1,2})?)\b"
@@ -34,7 +30,6 @@ _IPV6_PATTERN = re.compile(
     r"|[0-9a-fA-F]{1,4}::(?:[0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}"
     r"|(?:[0-9a-fA-F]{1,4}:){1,6}:)\b"
 )
-_PORT_PATTERN = re.compile(r"\b(6553[0-5]|655[0-2]\d|65[0-4]\d{2}|6[0-4]\d{3}|[1-5]\d{4}|[1-9]\d{0,3})\b")
 _PORT_RANGE_PATTERN = re.compile(r"\b(\d{1,5})-(\d{1,5})\b")
 
 
@@ -104,13 +99,10 @@ def extract_ports(text: str) -> List[str]:
 def extract_protocols(text: str) -> List[str]:
     """Extract recognised protocol names from *text*."""
     found: List[str] = []
-    seen: set = set()
     lower = text.lower()
     for proto in sorted(KNOWN_PROTOCOLS):
         if re.search(rf"\b{re.escape(proto)}\b", lower):
-            if proto not in seen:
-                seen.add(proto)
-                found.append(proto)
+            found.append(proto)
     return found
 
 
@@ -257,7 +249,7 @@ def parse_cisco_rule(rule_line: str) -> Dict[str, Any]:
     parsed["action"] = tokens[0].lower()
     parsed["protocol"] = tokens[1].lower()
 
-    def read_endpoint(start: int) -> (str, int):
+    def read_endpoint(start: int) -> tuple[str, int]:
         if start >= len(tokens):
             return "", start
 
