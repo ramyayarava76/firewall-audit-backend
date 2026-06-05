@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from parser import parse_rules
+from rule_checker import detect_dead_rules
 
 
 router = APIRouter()
@@ -71,5 +72,56 @@ async def audit_rules(payload: AuditRequest) -> Dict[str, Any]:
             "requested_vendor": payload.vendor,
             "summary": summary,
             "results": parsed_rules,
+        },
+    }
+
+
+@router.get("/audit/check-dead-rules")
+async def get_dead_rules_info() -> Dict[str, Any]:
+    """Get information about the dead rules checking endpoint."""
+    return {
+        "status": "success",
+        "data": {
+            "message": "Send firewall rules to POST /api/v1/audit/check-dead-rules to detect dead rules.",
+            "input_schema": {
+                "rules": ["rule line 1", "rule line 2"],
+                "vendor": "palo_alto or cisco (optional)",
+            },
+            "description": "Detects dead rules: parse errors, incomplete rules, redundant rules, shadowed rules, unreferenced rules, and ineffective catch-all rules.",
+        },
+    }
+
+
+@router.post("/audit/check-dead-rules")
+async def check_dead_rules(payload: AuditRequest) -> Dict[str, Any]:
+    """
+    Analyze firewall rules to detect 'dead rules'.
+
+    Dead rules include:
+    - Parse errors (invalid syntax)
+    - Incomplete rules (missing critical fields)
+    - Redundant rules (exact duplicates)
+    - Shadowed rules (unreachable in ACL order)
+    - Unreferenced rules (not called by policies)
+    - Ineffective rules (suspicious catch-all rules)
+    """
+    results = detect_dead_rules(payload.rules, vendor=payload.vendor)
+
+    return {
+        "status": "success",
+        "data": {
+            "requested_vendor": payload.vendor,
+            "total_rules_analyzed": results["total_rules"],
+            "dead_rules_count": results["dead_rules_count"],
+            "dead_rules": results["dead_rules"],
+            "redundant_groups": results["redundant_groups"],
+            "summary": {
+                "parse_errors": sum(1 for r in results["dead_rules"] if r["reason"] == "Parse error"),
+                "incomplete_rules": sum(1 for r in results["dead_rules"] if r["reason"] == "Incomplete rule"),
+                "redundant_rules": sum(1 for r in results["dead_rules"] if r["reason"] == "Redundant rule"),
+                "shadowed_rules": sum(1 for r in results["dead_rules"] if r["reason"] == "Shadowed by earlier rule"),
+                "unreferenced_rules": sum(1 for r in results["dead_rules"] if r["reason"] == "Potentially unreferenced rule"),
+                "ineffective_rules": sum(1 for r in results["dead_rules"] if r["reason"] == "Ineffective catch-all rule"),
+            },
         },
     }
