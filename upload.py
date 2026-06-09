@@ -33,4 +33,12 @@ async def upload_file(files: List[UploadFile] = File(...)):
             results.append({"filename": filename, "status": "error", "error": str(exc)})
         except Exception as exc:
             results.append({"filename": filename, "status": "error", "error": f"Unexpected error: {exc}"})
-    return {"results": results}
+    return {
+        "status": "success",
+        "data": {
+            "files": results,
+            "total_files": len(results),
+        },
+        # Keep legacy key for older clients.
+        "results": results,
+    }

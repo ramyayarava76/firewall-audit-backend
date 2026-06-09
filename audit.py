@@ -16,6 +16,18 @@ class AuditRequest(BaseModel):
     vendor: Optional[str] = None
 
 
+def _normalize_rules(rules: List[str]) -> List[str]:
+    """Trim incoming rules and discard blank entries from UI text input."""
+    normalized: List[str] = []
+    for rule in rules:
+        if rule is None:
+            continue
+        cleaned = str(rule).strip()
+        if cleaned:
+            normalized.append(cleaned)
+    return normalized
+
+
 def _build_summary(parsed_rules: List[Dict[str, Any]]) -> Dict[str, Any]:
     success_count = sum(1 for item in parsed_rules if not item.get("error"))
     failed_count = len(parsed_rules) - success_count
@@ -63,7 +75,8 @@ async def get_audit_info() -> Dict[str, Any]:
 
 @router.post("/audit")
 async def audit_rules(payload: AuditRequest) -> Dict[str, Any]:
-    parsed_rules = parse_rules(payload.rules, vendor=payload.vendor)
+    normalized_rules = _normalize_rules(payload.rules)
+    parsed_rules = parse_rules(normalized_rules, vendor=payload.vendor)
     summary = _build_summary(parsed_rules)
 
     return {
@@ -105,7 +118,8 @@ async def check_dead_rules(payload: AuditRequest) -> Dict[str, Any]:
     - Unreferenced rules (not called by policies)
     - Ineffective rules (suspicious catch-all rules)
     """
-    results = detect_dead_rules(payload.rules, vendor=payload.vendor)
+    normalized_rules = _normalize_rules(payload.rules)
+    results = detect_dead_rules(normalized_rules, vendor=payload.vendor)
 
     return {
         "status": "success",

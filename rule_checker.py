@@ -21,9 +21,18 @@ class DeadRuleDetector:
         """Initialize with a list of parsed firewall rules."""
         self.rules = parsed_rules
         self.dead_rules: List[Dict[str, Any]] = []
+        self._seen_findings: Set[Tuple[int, str]] = set()
         self.rule_references: Dict[str, Set[str]] = defaultdict(set)
         self.redundant_groups: List[List[int]] = []
         self.analysis_results: Dict[str, Any] = {}
+
+    def _add_dead_rule(self, entry: Dict[str, Any]) -> None:
+        """Add a dead-rule finding once per (index, reason) pair."""
+        key = (entry.get("index", -1), entry.get("reason", ""))
+        if key in self._seen_findings:
+            return
+        self._seen_findings.add(key)
+        self.dead_rules.append(entry)
 
     def run_analysis(self) -> Dict[str, Any]:
         """Run comprehensive dead rule detection."""
@@ -44,10 +53,9 @@ class DeadRuleDetector:
 
     def _identify_incomplete_rules(self) -> None:
         """Identify rules missing critical fields."""
-        critical_fields = {"action", "source", "destination", "protocol"}
         for idx, rule in enumerate(self.rules):
             if rule.get("error"):
-                self.dead_rules.append({
+                self._add_dead_rule({
                     "index": idx,
                     "reason": "Parse error",
                     "error": rule.get("error"),
@@ -55,13 +63,24 @@ class DeadRuleDetector:
                 })
                 continue
 
+            vendor = rule.get("vendor")
+            critical_fields = {"action", "source", "destination", "protocol"}
+            if vendor == "palo_alto":
+                # Palo Alto rules are often app/service-centric and may omit protocol.
+                critical_fields = {"action", "source", "destination"}
+
             missing_fields = []
             for field in critical_fields:
                 if not rule.get(field):
                     missing_fields.append(field)
 
+            if vendor == "palo_alto" and not any(
+                rule.get(field) for field in ("protocol", "service", "application")
+            ):
+                missing_fields.append("protocol_or_service")
+
             if missing_fields and rule.get("vendor") != "unknown":
-                self.dead_rules.append({
+                self._add_dead_rule({
                     "index": idx,
                     "reason": "Incomplete rule",
                     "missing_fields": missing_fields,
@@ -95,7 +114,7 @@ class DeadRuleDetector:
                 self.redundant_groups.append(indices)
                 # Mark all but the first as redundant
                 for idx in indices[1:]:
-                    self.dead_rules.append({
+                    self._add_dead_rule({
                         "index": idx,
                         "reason": "Redundant rule",
                         "duplicate_of": indices[0],
@@ -129,7 +148,7 @@ class DeadRuleDetector:
                     next_rule = self.rules[acl_indices[j]]
                     if (next_rule.get("acl_name") == acl_name
                             and self._rules_overlap(current_rule, next_rule)):
-                        self.dead_rules.append({
+                        self._add_dead_rule({
                             "index": acl_indices[j],
                             "reason": "Shadowed by earlier rule",
                             "shadowed_by": acl_indices[i],
@@ -168,7 +187,7 @@ class DeadRuleDetector:
             if rule_name in unreferenced:
                 # Only flag if it looks like it should be referenced (e.g., has underscore, starts with certain patterns)
                 if self._looks_like_referenced_rule(rule_name):
-                    self.dead_rules.append({
+                    self._add_dead_rule({
                         "index": idx,
                         "reason": "Potentially unreferenced rule",
                         "rule_name": rule_name,
@@ -185,12 +204,13 @@ class DeadRuleDetector:
             # Rule matching any source AND any destination AND any protocol is suspicious
             if (self._is_match_any(rule.get("source"))
                     and self._is_match_any(rule.get("destination"))
-                    and not rule.get("protocol")):
+                    and self._is_protocol_any(rule.get("protocol"))
+                    and not any(rule.get(field) for field in ("port", "service", "application"))):
                 # This is a catch-all rule; flag it as potentially ineffective
                 # unless it has a specific action
                 action = rule.get("action", "").lower()
                 if action in {"allow", "permit"}:
-                    self.dead_rules.append({
+                    self._add_dead_rule({
                         "index": idx,
                         "reason": "Ineffective catch-all rule",
                         "note": "Rule permits all traffic; may indicate incomplete configuration",
@@ -204,6 +224,12 @@ class DeadRuleDetector:
             return False
         return value.lower() in {"any", "*", "0.0.0.0/0", "::/0"}
 
+    def _is_protocol_any(self, value: Optional[str]) -> bool:
+        """Treat missing protocol, 'any', and Cisco 'ip' as match-any protocol."""
+        if not value:
+            return True
+        return value.lower() in {"any", "ip"}
+
     def _is_any_rule(self, rule: Dict[str, Any]) -> bool:
         """Check if a rule matches any source/destination/protocol."""
         return (self._is_match_any(rule.get("source")) and
@@ -216,6 +242,18 @@ class DeadRuleDetector:
         src2 = rule2.get("source", "").lower()
         dst1 = rule1.get("destination", "").lower()
         dst2 = rule2.get("destination", "").lower()
+        proto1 = (rule1.get("protocol") or "").lower()
+        proto2 = (rule2.get("protocol") or "").lower()
+        port1 = (rule1.get("port") or rule1.get("service") or "").lower()
+        port2 = (rule2.get("port") or rule2.get("service") or "").lower()
+
+        # An earlier rule only shadows protocol-specific traffic when protocol scopes overlap.
+        if not self._is_protocol_any(proto1) and proto1 != proto2:
+            return False
+
+        # If earlier rule is port-scoped, it can only shadow overlapping ports.
+        if not self._ports_overlap(port1, port2):
+            return False
 
         # If both are "any" or identical, they overlap
         if src1 == src2 and dst1 == dst2:
@@ -224,6 +262,33 @@ class DeadRuleDetector:
         if self._is_match_any(src1) and self._is_match_any(dst1):
             return True
         return False
+
+    def _ports_overlap(self, port1: str, port2: str) -> bool:
+        """Return True when earlier-rule port scope can match the later rule port scope."""
+        if not port1:
+            return True
+        if not port2:
+            return False
+        if port1 == port2:
+            return True
+
+        def parse_port_range(value: str) -> Optional[Tuple[int, int]]:
+            if "-" in value:
+                parts = value.split("-", 1)
+                if parts[0].isdigit() and parts[1].isdigit():
+                    low, high = int(parts[0]), int(parts[1])
+                    return (low, high) if low <= high else None
+                return None
+            if value.isdigit():
+                num = int(value)
+                return num, num
+            return None
+
+        r1 = parse_port_range(port1)
+        r2 = parse_port_range(port2)
+        if not r1 or not r2:
+            return False
+        return r1[0] <= r2[0] and r1[1] >= r2[1]
 
     def _looks_like_referenced_rule(self, name: str) -> bool:
         """Heuristic to determine if a rule name suggests it should be referenced."""

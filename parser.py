@@ -148,6 +148,7 @@ def parse_palo_alto_rule(rule_line: str) -> Dict[str, Any]:
         "raw": rule_line,
         "rule_name": None,
         "action": None,
+        "protocol": None,
         "source": None,
         "destination": None,
         "application": None,
@@ -160,6 +161,7 @@ def parse_palo_alto_rule(rule_line: str) -> Dict[str, Any]:
     if kv:
         parsed["rule_name"] = kv.get("rule") or kv.get("rulename") or kv.get("name")
         parsed["action"] = kv.get("action")
+        parsed["protocol"] = kv.get("protocol")
         parsed["source"] = kv.get("src") or kv.get("source")
         parsed["destination"] = kv.get("dst") or kv.get("destination")
         parsed["application"] = kv.get("app") or kv.get("application")
