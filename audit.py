@@ -6,6 +6,9 @@ from pydantic import BaseModel, Field
 
 from parser import parse_rules
 from rule_checker import detect_dead_rules
+from logger import get_logger, RequestLogger, AnalysisLogger
+
+logger = get_logger(__name__)
 
 
 router = APIRouter()
@@ -75,18 +78,31 @@ async def get_audit_info() -> Dict[str, Any]:
 
 @router.post("/audit")
 async def audit_rules(payload: AuditRequest) -> Dict[str, Any]:
-    normalized_rules = _normalize_rules(payload.rules)
-    parsed_rules = parse_rules(normalized_rules, vendor=payload.vendor)
-    summary = _build_summary(parsed_rules)
-
-    return {
-        "status": "success",
-        "data": {
-            "requested_vendor": payload.vendor,
-            "summary": summary,
-            "results": parsed_rules,
-        },
-    }
+    logger.info(f"Audit request received with {len(payload.rules)} rules from vendor: {payload.vendor}")
+    try:
+        normalized_rules = _normalize_rules(payload.rules)
+        logger.debug(f"Normalized {len(normalized_rules)} rules")
+        parsed_rules = parse_rules(normalized_rules, vendor=payload.vendor)
+        summary = _build_summary(parsed_rules)
+        
+        logger.info(
+            f"Audit completed: {summary['parsed_successfully']} parsed, "
+            f"{summary['failed_to_parse']} failed out of {summary['total_rules']} total"
+        )
+        RequestLogger.log_request("POST", "/api/v1/audit", 200, details={"rules_analyzed": summary['total_rules']})
+        
+        return {
+            "status": "success",
+            "data": {
+                "requested_vendor": payload.vendor,
+                "summary": summary,
+                "results": parsed_rules,
+            },
+        }
+    except Exception as e:
+        logger.error(f"Error during audit: {e}", exc_info=True)
+        RequestLogger.log_error("POST", "/api/v1/audit", str(e), 500)
+        raise
 
 
 @router.get("/audit/check-dead-rules")
@@ -118,24 +134,42 @@ async def check_dead_rules(payload: AuditRequest) -> Dict[str, Any]:
     - Unreferenced rules (not called by policies)
     - Ineffective rules (suspicious catch-all rules)
     """
-    normalized_rules = _normalize_rules(payload.rules)
-    results = detect_dead_rules(normalized_rules, vendor=payload.vendor)
+    logger.info(f"Dead rules check requested with {len(payload.rules)} rules from vendor: {payload.vendor}")
+    AnalysisLogger.log_analysis_start("dead_rules_detection", len(payload.rules))
+    
+    try:
+        normalized_rules = _normalize_rules(payload.rules)
+        results = detect_dead_rules(normalized_rules, vendor=payload.vendor)
+        
+        summary = {
+            "parse_errors": sum(1 for r in results["dead_rules"] if r["reason"] == "Parse error"),
+            "incomplete_rules": sum(1 for r in results["dead_rules"] if r["reason"] == "Incomplete rule"),
+            "redundant_rules": sum(1 for r in results["dead_rules"] if r["reason"] == "Redundant rule"),
+            "shadowed_rules": sum(1 for r in results["dead_rules"] if r["reason"] == "Shadowed by earlier rule"),
+            "unreferenced_rules": sum(1 for r in results["dead_rules"] if r["reason"] == "Potentially unreferenced rule"),
+            "ineffective_rules": sum(1 for r in results["dead_rules"] if r["reason"] == "Ineffective catch-all rule"),
+        }
+        
+        logger.info(
+            f"Dead rules detection completed: {results['dead_rules_count']} dead rules found out of "
+            f"{results['total_rules']} total rules"
+        )
+        AnalysisLogger.log_analysis_complete("dead_rules_detection", results["total_rules"], summary)
+        RequestLogger.log_request("POST", "/api/v1/audit/check-dead-rules", 200, details={"dead_rules_found": results["dead_rules_count"]})
 
-    return {
-        "status": "success",
-        "data": {
-            "requested_vendor": payload.vendor,
-            "total_rules_analyzed": results["total_rules"],
-            "dead_rules_count": results["dead_rules_count"],
-            "dead_rules": results["dead_rules"],
-            "redundant_groups": results["redundant_groups"],
-            "summary": {
-                "parse_errors": sum(1 for r in results["dead_rules"] if r["reason"] == "Parse error"),
-                "incomplete_rules": sum(1 for r in results["dead_rules"] if r["reason"] == "Incomplete rule"),
-                "redundant_rules": sum(1 for r in results["dead_rules"] if r["reason"] == "Redundant rule"),
-                "shadowed_rules": sum(1 for r in results["dead_rules"] if r["reason"] == "Shadowed by earlier rule"),
-                "unreferenced_rules": sum(1 for r in results["dead_rules"] if r["reason"] == "Potentially unreferenced rule"),
-                "ineffective_rules": sum(1 for r in results["dead_rules"] if r["reason"] == "Ineffective catch-all rule"),
+        return {
+            "status": "success",
+            "data": {
+                "requested_vendor": payload.vendor,
+                "total_rules_analyzed": results["total_rules"],
+                "dead_rules_count": results["dead_rules_count"],
+                "dead_rules": results["dead_rules"],
+                "redundant_groups": results["redundant_groups"],
+                "summary": summary,
             },
-        },
-    }
+        }
+    except Exception as e:
+        logger.error(f"Error during dead rules check: {e}", exc_info=True)
+        AnalysisLogger.log_analysis_error("dead_rules_detection", str(e))
+        RequestLogger.log_error("POST", "/api/v1/audit/check-dead-rules", str(e), 500)
+        raise

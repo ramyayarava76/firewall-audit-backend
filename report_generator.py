@@ -3,6 +3,9 @@ import json
 from io import StringIO
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 AUDIT_COLUMNS = [
@@ -62,6 +65,7 @@ def generate_audit_csv(parsed_rules: List[Dict[str, Any]]) -> str:
 
     Each row contains rule metadata plus extracted objects (IPs, ports, protocols).
     """
+    logger.info(f"Generating audit CSV report for {len(parsed_rules)} rules")
     rows: List[Dict[str, Any]] = []
     for index, item in enumerate(parsed_rules):
         extracted = item.get("extracted", {}) or {}
@@ -85,7 +89,9 @@ def generate_audit_csv(parsed_rules: List[Dict[str, Any]]) -> str:
                 "extracted_protocols": extracted.get("protocols", []),
             }
         )
-    return _rows_to_csv(rows, AUDIT_COLUMNS)
+    csv_content = _rows_to_csv(rows, AUDIT_COLUMNS)
+    logger.debug(f"Generated audit CSV: {len(csv_content)} bytes")
+    return csv_content
 
 
 def generate_dead_rules_csv(analysis_results: Dict[str, Any]) -> str:
@@ -95,6 +101,7 @@ def generate_dead_rules_csv(analysis_results: Dict[str, Any]) -> str:
     The CSV includes one row per dead-rule finding.
     """
     dead_rules = analysis_results.get("dead_rules", []) or []
+    logger.info(f"Generating dead rules CSV report for {len(dead_rules)} dead rules")
     rows: List[Dict[str, Any]] = []
     for item in dead_rules:
         rows.append(
@@ -110,15 +117,22 @@ def generate_dead_rules_csv(analysis_results: Dict[str, Any]) -> str:
                 "rule": item.get("rule"),
             }
         )
-    return _rows_to_csv(rows, DEAD_RULE_COLUMNS)
+    csv_content = _rows_to_csv(rows, DEAD_RULE_COLUMNS)
+    logger.debug(f"Generated dead rules CSV: {len(csv_content)} bytes")
+    return csv_content
 
 
 def write_csv_report(csv_content: str, output_path: str) -> str:
     """Persist CSV content and return the absolute output path."""
-    path = Path(output_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(csv_content, encoding="utf-8", newline="")
-    return str(path.resolve())
+    try:
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(csv_content, encoding="utf-8", newline="")
+        logger.info(f"CSV report written to {path.resolve()}")
+        return str(path.resolve())
+    except Exception as e:
+        logger.error(f"Error writing CSV report to {output_path}: {e}", exc_info=True)
+        raise
 
 
 def generate_and_save_audit_csv(parsed_rules: List[Dict[str, Any]], output_path: str) -> str:
@@ -141,14 +155,22 @@ def generate_csv_report(report_type: str, data: Any, output_path: Optional[str] 
       - "audit": data must be List[Dict[str, Any]] from parse_rules
       - "dead_rules": data must be Dict[str, Any] from detect_dead_rules
     """
+    logger.info(f"Generating {report_type} CSV report")
     normalized = (report_type or "").strip().lower()
-    if normalized == "audit":
-        csv_content = generate_audit_csv(data)
-    elif normalized in {"dead_rules", "dead-rules", "deadrules"}:
-        csv_content = generate_dead_rules_csv(data)
-    else:
-        raise ValueError("Unsupported report_type. Use 'audit' or 'dead_rules'.")
+    try:
+        if normalized == "audit":
+            csv_content = generate_audit_csv(data)
+        elif normalized in {"dead_rules", "dead-rules", "deadrules"}:
+            csv_content = generate_dead_rules_csv(data)
+        else:
+            logger.error(f"Unsupported report_type: {report_type}")
+            raise ValueError("Unsupported report_type. Use 'audit' or 'dead_rules'.")
 
-    if output_path:
-        write_csv_report(csv_content, output_path)
-    return csv_content
+        if output_path:
+            write_csv_report(csv_content, output_path)
+        
+        logger.info(f"Successfully generated {report_type} CSV report")
+        return csv_content
+    except Exception as e:
+        logger.error(f"Error generating {report_type} report: {e}", exc_info=True)
+        raise

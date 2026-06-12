@@ -2,7 +2,9 @@ import csv
 import json
 from io import StringIO
 from typing import List
+from logger import get_logger
 
+logger = get_logger(__name__)
 
 SUPPORTED_EXTENSIONS = {".csv", ".json", ".txt"}
 
@@ -19,17 +21,32 @@ def handle_uploaded_file(filename: str, content: bytes) -> List[str]:
     - ``.json`` — accepts a JSON array of strings **or** an array of objects
                    that contain a ``rule`` key
     """
+    logger.info(f"Processing uploaded file: {filename} ({len(content)} bytes)")
     lower = filename.lower()
-    if lower.endswith(".txt"):
-        return _parse_txt(content)
-    if lower.endswith(".csv"):
-        return _parse_csv(content)
-    if lower.endswith(".json"):
-        return _parse_json(content)
-    raise ValueError(
-        f"Unsupported file type '{filename}'. Allowed extensions: "
-        + ", ".join(sorted(SUPPORTED_EXTENSIONS))
-    )
+    
+    try:
+        if lower.endswith(".txt"):
+            logger.debug(f"Parsing as TXT file: {filename}")
+            rules = _parse_txt(content)
+        elif lower.endswith(".csv"):
+            logger.debug(f"Parsing as CSV file: {filename}")
+            rules = _parse_csv(content)
+        elif lower.endswith(".json"):
+            logger.debug(f"Parsing as JSON file: {filename}")
+            rules = _parse_json(content)
+        else:
+            error_msg = (
+                f"Unsupported file type '{filename}'. Allowed extensions: "
+                + ", ".join(sorted(SUPPORTED_EXTENSIONS))
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        
+        logger.info(f"Successfully extracted {len(rules)} rules from {filename}")
+        return rules
+    except Exception as e:
+        logger.error(f"Error processing file {filename}: {e}", exc_info=True)
+        raise
 
 
 def _decode(content: bytes) -> str:
@@ -44,8 +61,11 @@ def _decode(content: bytes) -> str:
 def _parse_txt(content: bytes) -> List[str]:
     try:
         text = _decode(content)
-        return [line.rstrip() for line in text.splitlines() if line.strip()]
+        rules = [line.rstrip() for line in text.splitlines() if line.strip()]
+        logger.debug(f"TXT parsing: extracted {len(rules)} rules from {len(text)} characters")
+        return rules
     except Exception as exc:
+        logger.error(f"TXT parsing error: {exc}", exc_info=True)
         raise ValueError(f"TXT parsing error: {exc}") from exc
 
 
@@ -54,11 +74,21 @@ def _parse_csv(content: bytes) -> List[str]:
         text = _decode(content)
         reader = csv.DictReader(StringIO(text))
         if reader.fieldnames is None:
+            logger.error("CSV parsing: no header row found")
             raise ValueError("CSV file has no header row.")
+        
+        logger.debug(f"CSV parsing: found columns {reader.fieldnames}")
+        
         # Locate the rule column (case-insensitive)
         rule_col = next(
             (f for f in reader.fieldnames if f.strip().lower() == "rule"), None
         )
+        
+        if rule_col:
+            logger.debug(f"CSV parsing: using column '{rule_col}' for rules")
+        else:
+            logger.debug(f"CSV parsing: 'rule' column not found, using first column")
+        
         rules: List[str] = []
         for row in reader:
             if rule_col:
@@ -69,10 +99,13 @@ def _parse_csv(content: bytes) -> List[str]:
                 value = row.get(first_key, "").strip()
             if value:
                 rules.append(value)
+        
+        logger.debug(f"CSV parsing: extracted {len(rules)} rules")
         return rules
     except ValueError:
         raise
     except Exception as exc:
+        logger.error(f"CSV parsing error: {exc}", exc_info=True)
         raise ValueError(f"CSV parsing error: {exc}") from exc
 
 
@@ -81,9 +114,12 @@ def _parse_json(content: bytes) -> List[str]:
         text = _decode(content)
         data = json.loads(text)
         if not isinstance(data, list):
+            logger.error("JSON parsing: top-level element is not an array")
             raise ValueError("JSON file must contain a top-level array of rules.")
+        
+        logger.debug(f"JSON parsing: found {len(data)} elements")
         rules: List[str] = []
-        for item in data:
+        for i, item in enumerate(data):
             if isinstance(item, str):
                 if item.strip():
                     rules.append(item.strip())
@@ -96,11 +132,16 @@ def _parse_json(content: bytes) -> List[str]:
                 if isinstance(value, str) and value.strip():
                     rules.append(value.strip())
             else:
+                logger.warning(f"JSON parsing: skipping element {i} of type {type(item).__name__}")
                 raise ValueError(
                     f"Each JSON element must be a string or an object with a 'rule' key; got {type(item).__name__}."
                 )
+        
+        logger.debug(f"JSON parsing: extracted {len(rules)} rules")
         return rules
     except (ValueError, json.JSONDecodeError) as exc:
+        logger.error(f"JSON parsing error: {exc}", exc_info=True)
         raise ValueError(f"JSON parsing error: {exc}") from exc
     except Exception as exc:
+        logger.error(f"JSON parsing error: {exc}", exc_info=True)
         raise ValueError(f"JSON parsing error: {exc}") from exc

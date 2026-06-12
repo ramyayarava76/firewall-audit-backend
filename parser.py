@@ -1,6 +1,8 @@
 import re
 from typing import Any, Dict, Iterable, List, Optional, Set
+from logger import get_logger
 
+logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Known values
@@ -316,4 +318,27 @@ def parse_rule(rule_line: str, vendor: Optional[str] = None) -> Dict[str, Any]:
 
 
 def parse_rules(rule_lines: Iterable[str], vendor: Optional[str] = None) -> List[Dict[str, Any]]:
-    return [parse_rule(line, vendor=vendor) for line in rule_lines if line is not None]
+    logger.debug(f"Starting to parse rules with vendor hint: {vendor}")
+    results = []
+    error_count = 0
+    
+    for i, line in enumerate(rule_lines):
+        if line is None:
+            continue
+        try:
+            result = parse_rule(line, vendor=vendor)
+            if result.get("error"):
+                error_count += 1
+                logger.debug(f"Parse error at rule {i}: {result.get('error')}")
+            results.append(result)
+        except Exception as e:
+            logger.error(f"Exception parsing rule {i}: {e}", exc_info=True)
+            results.append({
+                "vendor": vendor or "unknown",
+                "raw": line,
+                "error": f"Exception: {e}",
+            })
+            error_count += 1
+    
+    logger.info(f"Parsed {len(results)} rules with {error_count} errors")
+    return results

@@ -12,6 +12,9 @@ Detects "dead rules" in firewall configurations:
 from typing import Any, Dict, List, Optional, Set, Tuple
 from collections import defaultdict
 from parser import parse_rules
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class DeadRuleDetector:
@@ -36,20 +39,28 @@ class DeadRuleDetector:
 
     def run_analysis(self) -> Dict[str, Any]:
         """Run comprehensive dead rule detection."""
-        self._identify_incomplete_rules()
-        self._identify_redundant_rules()
-        self._identify_shadowed_rules()
-        self._identify_unreferenced_rules()
-        self._identify_ineffective_rules()
+        logger.debug(f"Starting dead rule analysis on {len(self.rules)} rules")
+        
+        try:
+            self._identify_incomplete_rules()
+            self._identify_redundant_rules()
+            self._identify_shadowed_rules()
+            self._identify_unreferenced_rules()
+            self._identify_ineffective_rules()
 
-        self.analysis_results = {
-            "total_rules": len(self.rules),
-            "dead_rules_count": len(self.dead_rules),
-            "dead_rules": self.dead_rules,
-            "redundant_groups": self.redundant_groups,
-            "rule_references": dict(self.rule_references),
-        }
-        return self.analysis_results
+            self.analysis_results = {
+                "total_rules": len(self.rules),
+                "dead_rules_count": len(self.dead_rules),
+                "dead_rules": self.dead_rules,
+                "redundant_groups": self.redundant_groups,
+                "rule_references": dict(self.rule_references),
+            }
+            
+            logger.info(f"Dead rule analysis complete: {len(self.dead_rules)} dead rules found out of {len(self.rules)} total")
+            return self.analysis_results
+        except Exception as e:
+            logger.error(f"Error during dead rule analysis: {e}", exc_info=True)
+            raise
 
     def _identify_incomplete_rules(self) -> None:
         """Identify rules missing critical fields."""
@@ -307,9 +318,17 @@ def detect_dead_rules(rules: List[str], vendor: Optional[str] = None) -> Dict[st
     Returns:
         Dictionary with analysis results
     """
-    parsed_rules = parse_rules(rules, vendor=vendor)
-    detector = DeadRuleDetector(parsed_rules)
-    return detector.run_analysis()
+    logger.info(f"detect_dead_rules called with {len(rules)} rules, vendor={vendor}")
+    try:
+        parsed_rules = parse_rules(rules, vendor=vendor)
+        logger.debug(f"Parsed {len(parsed_rules)} rules, initializing detector")
+        detector = DeadRuleDetector(parsed_rules)
+        results = detector.run_analysis()
+        logger.info(f"Dead rules detection returned {results['dead_rules_count']} dead rules")
+        return results
+    except Exception as e:
+        logger.error(f"Error in detect_dead_rules: {e}", exc_info=True)
+        raise
 
 
 def print_dead_rules_report(analysis_results: Dict[str, Any]) -> None:
