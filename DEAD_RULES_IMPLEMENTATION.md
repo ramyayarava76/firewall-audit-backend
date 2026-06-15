@@ -179,6 +179,23 @@ Palo Alto Tests: 6 dead rules found (4 incomplete, 1 redundant, 1 ineffective)
 Mixed/Error Cases: 3 dead rules found (2 parse errors, 1 incomplete)
 ```
 
+### UI/API Automated Tests
+
+Added endpoint-level automated tests in [test_api_dead_rules.py](test_api_dead_rules.py) and executed successfully.
+
+- ✅ GET /api/v1/audit/check-dead-rules returns endpoint contract metadata
+- ✅ POST /api/v1/audit/check-dead-rules detects redundant rules and returns summary counts
+- ✅ UI-style blank/whitespace line input is normalized correctly in dead-rules endpoint
+- ✅ UI-style blank/whitespace line input is normalized correctly in /api/v1/audit endpoint
+
+Run command:
+
+```bash
+python test_api_dead_rules.py
+```
+
+Latest run status: ✅ Passed (4/4 tests)
+
 ## Performance Characteristics
 
 - **Time Complexity:** O(n²) for redundancy detection
@@ -241,6 +258,7 @@ Mixed/Error Cases: 3 dead rules found (2 parse errors, 1 incomplete)
 ✅ **Multiple Vendors:** Support for Cisco and Palo Alto  
 ✅ **API Integration:** POST endpoint with detailed responses  
 ✅ **Test Coverage:** Comprehensive test suite with edge cases  
+✅ **UI/API Testing:** Endpoint-level automated tests with request normalization checks  
 ✅ **Documentation:** Complete API docs and usage guides  
 ✅ **Error Handling:** Robust error handling and reporting  
 ✅ **Performance:** Efficient O(n²) analysis algorithm  
