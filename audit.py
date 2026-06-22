@@ -2,9 +2,11 @@ from collections import Counter
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from parser import parse_rules
+from report_generator import generate_audit_csv, generate_dead_rules_csv
 from rule_checker import detect_dead_rules
 from logger import get_logger, RequestLogger, AnalysisLogger
 
@@ -172,4 +174,54 @@ async def check_dead_rules(payload: AuditRequest) -> Dict[str, Any]:
         logger.error(f"Error during dead rules check: {e}", exc_info=True)
         AnalysisLogger.log_analysis_error("dead_rules_detection", str(e))
         RequestLogger.log_error("POST", "/api/v1/audit/check-dead-rules", str(e), 500)
+        raise
+
+
+@router.post("/audit/report")
+async def download_audit_report(payload: AuditRequest):
+    """
+    Parse the supplied rules and return the results as a downloadable CSV file.
+    """
+    logger.info(f"Audit CSV report requested for {len(payload.rules)} rules")
+    try:
+        normalized_rules = _normalize_rules(payload.rules)
+        parsed_rules = parse_rules(normalized_rules, vendor=payload.vendor)
+        csv_content = generate_audit_csv(parsed_rules)
+        logger.info(f"Audit CSV report generated: {len(csv_content)} bytes")
+        RequestLogger.log_request("POST", "/api/v1/audit/report", 200, details={"rules_analyzed": len(parsed_rules)})
+        return StreamingResponse(
+            iter([csv_content]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=audit_report.csv"},
+        )
+    except Exception as e:
+        logger.error(f"Error generating audit CSV report: {e}", exc_info=True)
+        RequestLogger.log_error("POST", "/api/v1/audit/report", str(e), 500)
+        raise
+
+
+@router.post("/audit/check-dead-rules/report")
+async def download_dead_rules_report(payload: AuditRequest):
+    """
+    Analyze the supplied rules for dead rules and return the findings as a
+    downloadable CSV file.
+    """
+    logger.info(f"Dead rules CSV report requested for {len(payload.rules)} rules")
+    try:
+        normalized_rules = _normalize_rules(payload.rules)
+        results = detect_dead_rules(normalized_rules, vendor=payload.vendor)
+        csv_content = generate_dead_rules_csv(results)
+        logger.info(f"Dead rules CSV report generated: {len(csv_content)} bytes")
+        RequestLogger.log_request(
+            "POST", "/api/v1/audit/check-dead-rules/report", 200,
+            details={"dead_rules_found": results.get("dead_rules_count", 0)},
+        )
+        return StreamingResponse(
+            iter([csv_content]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=dead_rules_report.csv"},
+        )
+    except Exception as e:
+        logger.error(f"Error generating dead rules CSV report: {e}", exc_info=True)
+        RequestLogger.log_error("POST", "/api/v1/audit/check-dead-rules/report", str(e), 500)
         raise

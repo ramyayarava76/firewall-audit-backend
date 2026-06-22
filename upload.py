@@ -10,6 +10,23 @@ logger = get_logger(__name__)
 router = APIRouter()
 
 
+@router.get("/upload")
+async def get_upload_info():
+    """Return information about the upload endpoint."""
+    logger.debug("Upload info endpoint accessed")
+    RequestLogger.log_request("GET", "/api/v1/upload", 200)
+    return {
+        "status": "success",
+        "data": {
+            "message": "POST one or more firewall config files to /api/v1/upload for automatic parsing and auditing.",
+            "accepted_formats": [".csv", ".json", ".txt"],
+            "input_schema": {
+                "files": "multipart/form-data file upload (field name: files)"
+            },
+        },
+    }
+
+
 @router.post("/upload")
 async def upload_file(files: List[UploadFile] = File(...)):
     """
