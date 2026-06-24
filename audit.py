@@ -21,6 +21,16 @@ class AuditRequest(BaseModel):
     vendor: Optional[str] = None
 
 
+DEAD_RULE_REASON_TO_SUMMARY_KEY = {
+    "Parse error": "parse_errors",
+    "Incomplete rule": "incomplete_rules",
+    "Redundant rule": "redundant_rules",
+    "Shadowed by earlier rule": "shadowed_rules",
+    "Potentially unreferenced rule": "unreferenced_rules",
+    "Ineffective catch-all rule": "ineffective_rules",
+}
+
+
 def _normalize_rules(rules: List[str]) -> List[str]:
     """Trim incoming rules and discard blank entries from UI text input."""
     normalized: List[str] = []
@@ -34,21 +44,27 @@ def _normalize_rules(rules: List[str]) -> List[str]:
 
 
 def _build_summary(parsed_rules: List[Dict[str, Any]]) -> Dict[str, Any]:
-    success_count = sum(1 for item in parsed_rules if not item.get("error"))
-    failed_count = len(parsed_rules) - success_count
-
-    vendor_counts = Counter(item.get("vendor", "unknown") for item in parsed_rules)
-    action_counts = Counter(item.get("action", "unknown") for item in parsed_rules)
+    success_count = 0
+    vendor_counts: Counter = Counter()
+    action_counts: Counter = Counter()
 
     ips: set[str] = set()
     ports: set[str] = set()
     protocols: set[str] = set()
 
     for item in parsed_rules:
+        if not item.get("error"):
+            success_count += 1
+
+        vendor_counts[item.get("vendor", "unknown")] += 1
+        action_counts[item.get("action", "unknown")] += 1
+
         extracted = item.get("extracted", {})
         ips.update(extracted.get("ips", []))
         ports.update(extracted.get("ports", []))
         protocols.update(extracted.get("protocols", []))
+
+    failed_count = len(parsed_rules) - success_count
 
     return {
         "total_rules": len(parsed_rules),
@@ -61,6 +77,40 @@ def _build_summary(parsed_rules: List[Dict[str, Any]]) -> Dict[str, Any]:
             "ports": sorted(ports),
             "protocols": sorted(protocols),
         },
+    }
+
+
+def _empty_summary() -> Dict[str, Any]:
+    return {
+        "total_rules": 0,
+        "parsed_successfully": 0,
+        "failed_to_parse": 0,
+        "vendors": {},
+        "actions": {},
+        "unique_objects": {
+            "ips": [],
+            "ports": [],
+            "protocols": [],
+        },
+    }
+
+
+def _dead_rules_summary(dead_rules: List[Dict[str, Any]]) -> Dict[str, int]:
+    summary = {key: 0 for key in DEAD_RULE_REASON_TO_SUMMARY_KEY.values()}
+    reason_counts = Counter(item.get("reason") for item in dead_rules)
+
+    for reason, summary_key in DEAD_RULE_REASON_TO_SUMMARY_KEY.items():
+        summary[summary_key] = reason_counts.get(reason, 0)
+
+    return summary
+
+
+def _empty_dead_rules_result() -> Dict[str, Any]:
+    return {
+        "total_rules": 0,
+        "dead_rules_count": 0,
+        "dead_rules": [],
+        "redundant_groups": [],
     }
 
 
@@ -84,8 +134,12 @@ async def audit_rules(payload: AuditRequest) -> Dict[str, Any]:
     try:
         normalized_rules = _normalize_rules(payload.rules)
         logger.debug(f"Normalized {len(normalized_rules)} rules")
-        parsed_rules = parse_rules(normalized_rules, vendor=payload.vendor)
-        summary = _build_summary(parsed_rules)
+        if not normalized_rules:
+            parsed_rules = []
+            summary = _empty_summary()
+        else:
+            parsed_rules = parse_rules(normalized_rules, vendor=payload.vendor)
+            summary = _build_summary(parsed_rules)
         
         logger.info(
             f"Audit completed: {summary['parsed_successfully']} parsed, "
@@ -141,16 +195,13 @@ async def check_dead_rules(payload: AuditRequest) -> Dict[str, Any]:
     
     try:
         normalized_rules = _normalize_rules(payload.rules)
-        results = detect_dead_rules(normalized_rules, vendor=payload.vendor)
-        
-        summary = {
-            "parse_errors": sum(1 for r in results["dead_rules"] if r["reason"] == "Parse error"),
-            "incomplete_rules": sum(1 for r in results["dead_rules"] if r["reason"] == "Incomplete rule"),
-            "redundant_rules": sum(1 for r in results["dead_rules"] if r["reason"] == "Redundant rule"),
-            "shadowed_rules": sum(1 for r in results["dead_rules"] if r["reason"] == "Shadowed by earlier rule"),
-            "unreferenced_rules": sum(1 for r in results["dead_rules"] if r["reason"] == "Potentially unreferenced rule"),
-            "ineffective_rules": sum(1 for r in results["dead_rules"] if r["reason"] == "Ineffective catch-all rule"),
-        }
+        results = (
+            detect_dead_rules(normalized_rules, vendor=payload.vendor)
+            if normalized_rules
+            else _empty_dead_rules_result()
+        )
+
+        summary = _dead_rules_summary(results["dead_rules"])
         
         logger.info(
             f"Dead rules detection completed: {results['dead_rules_count']} dead rules found out of "
@@ -185,7 +236,11 @@ async def download_audit_report(payload: AuditRequest):
     logger.info(f"Audit CSV report requested for {len(payload.rules)} rules")
     try:
         normalized_rules = _normalize_rules(payload.rules)
-        parsed_rules = parse_rules(normalized_rules, vendor=payload.vendor)
+        parsed_rules = (
+            parse_rules(normalized_rules, vendor=payload.vendor)
+            if normalized_rules
+            else []
+        )
         csv_content = generate_audit_csv(parsed_rules)
         logger.info(f"Audit CSV report generated: {len(csv_content)} bytes")
         RequestLogger.log_request("POST", "/api/v1/audit/report", 200, details={"rules_analyzed": len(parsed_rules)})
@@ -209,7 +264,11 @@ async def download_dead_rules_report(payload: AuditRequest):
     logger.info(f"Dead rules CSV report requested for {len(payload.rules)} rules")
     try:
         normalized_rules = _normalize_rules(payload.rules)
-        results = detect_dead_rules(normalized_rules, vendor=payload.vendor)
+        results = (
+            detect_dead_rules(normalized_rules, vendor=payload.vendor)
+            if normalized_rules
+            else _empty_dead_rules_result()
+        )
         csv_content = generate_dead_rules_csv(results)
         logger.info(f"Dead rules CSV report generated: {len(csv_content)} bytes")
         RequestLogger.log_request(
