@@ -4,3 +4,4 @@ python-multipart>=0.0.7
 python-dotenv>=1.0.0
 pydantic>=2.9.0
 pydantic-settings>=2.4.0
+httpx2>=0.22.0
