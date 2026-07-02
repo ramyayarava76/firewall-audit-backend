@@ -15,6 +15,10 @@ logger = get_logger(__name__)
 
 router = APIRouter()
 
+AUDIT_ENDPOINT = "/api/v1/audit"
+DEAD_RULES_ENDPOINT = "/api/v1/audit/check-dead-rules"
+DEAD_RULES_REPORT_ENDPOINT = "/api/v1/audit/check-dead-rules/report"
+
 
 class AuditRequest(BaseModel):
     rules: List[str] = Field(default_factory=list)
@@ -114,6 +118,12 @@ def _empty_dead_rules_result() -> Dict[str, Any]:
     }
 
 
+def _analyze_dead_rules(normalized_rules: List[str], vendor: Optional[str]) -> Dict[str, Any]:
+    if not normalized_rules:
+        return _empty_dead_rules_result()
+    return detect_dead_rules(normalized_rules, vendor=vendor)
+
+
 @router.get("/audit")
 async def get_audit_info() -> Dict[str, Any]:
     return {
@@ -145,7 +155,7 @@ async def audit_rules(payload: AuditRequest) -> Dict[str, Any]:
             f"Audit completed: {summary['parsed_successfully']} parsed, "
             f"{summary['failed_to_parse']} failed out of {summary['total_rules']} total"
         )
-        RequestLogger.log_request("POST", "/api/v1/audit", 200, details={"rules_analyzed": summary['total_rules']})
+        RequestLogger.log_request("POST", AUDIT_ENDPOINT, 200, details={"rules_analyzed": summary['total_rules']})
         
         return {
             "status": "success",
@@ -157,7 +167,7 @@ async def audit_rules(payload: AuditRequest) -> Dict[str, Any]:
         }
     except Exception as e:
         logger.error(f"Error during audit: {e}", exc_info=True)
-        RequestLogger.log_error("POST", "/api/v1/audit", str(e), 500)
+        RequestLogger.log_error("POST", AUDIT_ENDPOINT, str(e), 500)
         raise
 
 
@@ -195,11 +205,7 @@ async def check_dead_rules(payload: AuditRequest) -> Dict[str, Any]:
     
     try:
         normalized_rules = _normalize_rules(payload.rules)
-        results = (
-            detect_dead_rules(normalized_rules, vendor=payload.vendor)
-            if normalized_rules
-            else _empty_dead_rules_result()
-        )
+        results = _analyze_dead_rules(normalized_rules, vendor=payload.vendor)
 
         summary = _dead_rules_summary(results["dead_rules"])
         
@@ -208,7 +214,7 @@ async def check_dead_rules(payload: AuditRequest) -> Dict[str, Any]:
             f"{results['total_rules']} total rules"
         )
         AnalysisLogger.log_analysis_complete("dead_rules_detection", results["total_rules"], summary)
-        RequestLogger.log_request("POST", "/api/v1/audit/check-dead-rules", 200, details={"dead_rules_found": results["dead_rules_count"]})
+        RequestLogger.log_request("POST", DEAD_RULES_ENDPOINT, 200, details={"dead_rules_found": results["dead_rules_count"]})
 
         return {
             "status": "success",
@@ -224,7 +230,7 @@ async def check_dead_rules(payload: AuditRequest) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error during dead rules check: {e}", exc_info=True)
         AnalysisLogger.log_analysis_error("dead_rules_detection", str(e))
-        RequestLogger.log_error("POST", "/api/v1/audit/check-dead-rules", str(e), 500)
+        RequestLogger.log_error("POST", DEAD_RULES_ENDPOINT, str(e), 500)
         raise
 
 
@@ -243,7 +249,7 @@ async def download_audit_report(payload: AuditRequest):
         )
         csv_content = generate_audit_csv(parsed_rules)
         logger.info(f"Audit CSV report generated: {len(csv_content)} bytes")
-        RequestLogger.log_request("POST", "/api/v1/audit/report", 200, details={"rules_analyzed": len(parsed_rules)})
+        RequestLogger.log_request("POST", f"{AUDIT_ENDPOINT}/report", 200, details={"rules_analyzed": len(parsed_rules)})
         return StreamingResponse(
             iter([csv_content]),
             media_type="text/csv",
@@ -251,11 +257,12 @@ async def download_audit_report(payload: AuditRequest):
         )
     except Exception as e:
         logger.error(f"Error generating audit CSV report: {e}", exc_info=True)
-        RequestLogger.log_error("POST", "/api/v1/audit/report", str(e), 500)
+        RequestLogger.log_error("POST", f"{AUDIT_ENDPOINT}/report", str(e), 500)
         raise
 
 
 @router.post("/audit/check-dead-rules/report")
+@router.post("/audit/dead-rules-report")
 async def download_dead_rules_report(payload: AuditRequest):
     """
     Analyze the supplied rules for dead rules and return the findings as a
@@ -264,15 +271,11 @@ async def download_dead_rules_report(payload: AuditRequest):
     logger.info(f"Dead rules CSV report requested for {len(payload.rules)} rules")
     try:
         normalized_rules = _normalize_rules(payload.rules)
-        results = (
-            detect_dead_rules(normalized_rules, vendor=payload.vendor)
-            if normalized_rules
-            else _empty_dead_rules_result()
-        )
+        results = _analyze_dead_rules(normalized_rules, vendor=payload.vendor)
         csv_content = generate_dead_rules_csv(results)
         logger.info(f"Dead rules CSV report generated: {len(csv_content)} bytes")
         RequestLogger.log_request(
-            "POST", "/api/v1/audit/check-dead-rules/report", 200,
+            "POST", DEAD_RULES_REPORT_ENDPOINT, 200,
             details={"dead_rules_found": results.get("dead_rules_count", 0)},
         )
         return StreamingResponse(
@@ -282,5 +285,5 @@ async def download_dead_rules_report(payload: AuditRequest):
         )
     except Exception as e:
         logger.error(f"Error generating dead rules CSV report: {e}", exc_info=True)
-        RequestLogger.log_error("POST", "/api/v1/audit/check-dead-rules/report", str(e), 500)
+        RequestLogger.log_error("POST", DEAD_RULES_REPORT_ENDPOINT, str(e), 500)
         raise

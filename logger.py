@@ -16,9 +16,12 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
+MAX_LOG_FILE_BYTES = 10 * 1024 * 1024
+LOG_BACKUP_COUNT = 5
+
 # Log directory
 LOG_DIR = Path("logs")
-LOG_DIR.mkdir(exist_ok=True)
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # Log file paths
 LOG_FILE = LOG_DIR / f"firewall_audit_{datetime.now().strftime('%Y%m%d')}.log"
@@ -70,8 +73,9 @@ def setup_logging(
     if file_output:
         file_handler = logging.handlers.RotatingFileHandler(
             LOG_FILE,
-            maxBytes=10485760,  # 10MB
-            backupCount=5,
+            maxBytes=MAX_LOG_FILE_BYTES,
+            backupCount=LOG_BACKUP_COUNT,
+            encoding="utf-8",
         )
         file_handler.setLevel(getattr(logging, level.upper(), logging.INFO))
         file_handler.setFormatter(formatter)
@@ -80,8 +84,9 @@ def setup_logging(
         # File handler - Error logs only
         error_handler = logging.handlers.RotatingFileHandler(
             ERROR_LOG_FILE,
-            maxBytes=10485760,  # 10MB
-            backupCount=5,
+            maxBytes=MAX_LOG_FILE_BYTES,
+            backupCount=LOG_BACKUP_COUNT,
+            encoding="utf-8",
         )
         error_handler.setLevel(logging.ERROR)
         error_handler.setFormatter(formatter)
@@ -210,10 +215,10 @@ class AnalysisLogger:
 
 
 # Initialize logging when module is imported
-if os.getenv("DISABLE_LOGGING") != "true":
+if os.getenv("DISABLE_LOGGING", "false").strip().lower() not in {"1", "true", "yes", "on"}:
     setup_logging(
         level=os.getenv("LOG_LEVEL", "INFO"),
         console_output=True,
         file_output=True,
-        detailed=os.getenv("DETAILED_LOGS", "false").lower() == "true",
+        detailed=os.getenv("DETAILED_LOGS", "false").strip().lower() in {"1", "true", "yes", "on"},
     )

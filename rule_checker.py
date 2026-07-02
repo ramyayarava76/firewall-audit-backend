@@ -37,6 +37,11 @@ class DeadRuleDetector:
         self._seen_findings.add(key)
         self.dead_rules.append(entry)
 
+    def _get_required_fields(self, vendor: str) -> Set[str]:
+        if vendor == "palo_alto":
+            return {"action", "source", "destination"}
+        return {"action", "source", "destination", "protocol"}
+
     def run_analysis(self) -> Dict[str, Any]:
         """Run comprehensive dead rule detection."""
         logger.debug(f"Starting dead rule analysis on {len(self.rules)} rules")
@@ -75,15 +80,9 @@ class DeadRuleDetector:
                 continue
 
             vendor = rule.get("vendor")
-            critical_fields = {"action", "source", "destination", "protocol"}
-            if vendor == "palo_alto":
-                # Palo Alto rules are often app/service-centric and may omit protocol.
-                critical_fields = {"action", "source", "destination"}
+            critical_fields = self._get_required_fields(vendor)
 
-            missing_fields = []
-            for field in critical_fields:
-                if not rule.get(field):
-                    missing_fields.append(field)
+            missing_fields = [field for field in critical_fields if not rule.get(field)]
 
             if vendor == "palo_alto" and not any(
                 rule.get(field) for field in ("protocol", "service", "application")
@@ -138,14 +137,11 @@ class DeadRuleDetector:
         Identify Cisco ACL rules that are shadowed (unreachable) due to
         prior rules with broader match criteria.
         """
-        for vendor_type in ["cisco", "palo_alto"]:
-            vendor_indices = [
-                i for i, rule in enumerate(self.rules)
-                if rule.get("vendor") == vendor_type and not rule.get("error")
-            ]
-
-            if vendor_type == "cisco":
-                self._detect_shadowed_acl_rules(vendor_indices)
+        cisco_indices = [
+            i for i, rule in enumerate(self.rules)
+            if rule.get("vendor") == "cisco" and not rule.get("error")
+        ]
+        self._detect_shadowed_acl_rules(cisco_indices)
 
     def _detect_shadowed_acl_rules(self, acl_indices: List[int]) -> None:
         """Detect shadowed rules in Cisco ACL order."""

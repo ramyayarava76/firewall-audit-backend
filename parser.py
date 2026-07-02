@@ -33,6 +33,14 @@ _IPV6_PATTERN = re.compile(
     r"|(?:[0-9a-fA-F]{1,4}:){1,6}:)\b"
 )
 _PORT_RANGE_PATTERN = re.compile(r"\b(\d{1,5})-(\d{1,5})\b")
+_NAMED_PORT_PATTERN = re.compile(
+    r"\b(?:eq|port|service|dport|sport)\s+(" + "|".join(WELL_KNOWN_PORTS.keys()) + r")\b",
+    re.IGNORECASE,
+)
+_NUMERIC_PORT_PATTERN = re.compile(
+    r"(?:eq|port|dport|sport|service|:)\s*(\d{1,5})\b",
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -63,11 +71,7 @@ def extract_ports(text: str) -> List[str]:
     seen: set = set()
 
     # Named ports (e.g. "eq http", "service https")
-    named_port_pattern = re.compile(
-        r"\b(?:eq|port|service|dport|sport)\s+(" + "|".join(WELL_KNOWN_PORTS.keys()) + r")\b",
-        re.IGNORECASE,
-    )
-    for match in named_port_pattern.finditer(text):
+    for match in _NAMED_PORT_PATTERN.finditer(text):
         name = match.group(1).lower()
         key = str(WELL_KNOWN_PORTS[name])
         if key not in seen:
@@ -84,10 +88,7 @@ def extract_ports(text: str) -> List[str]:
                 result.append(key)
 
     # Numeric ports preceded by eq/port/dport/sport/service or a colon
-    numeric_port_pattern = re.compile(
-        r"(?:eq|port|dport|sport|service|:)\s*(\d{1,5})\b", re.IGNORECASE
-    )
-    for match in numeric_port_pattern.finditer(text):
+    for match in _NUMERIC_PORT_PATTERN.finditer(text):
         val = int(match.group(1))
         if 1 <= val <= 65535:
             key = str(val)
@@ -231,16 +232,18 @@ def parse_cisco_rule(rule_line: str) -> Dict[str, Any]:
         parsed["error"] = "Empty rule tokens"
         return parsed
 
-    if tokens[0].lower() == "access-list":
+    lower_tokens = [token.lower() for token in tokens]
+
+    if lower_tokens[0] == "access-list":
         # Normalize into ACL body:
         # access-list <name> [line <n>] extended|standard <rule...>
         if len(tokens) >= 2:
             parsed["acl_name"] = tokens[1]
-        if "extended" in [t.lower() for t in tokens]:
-            idx = [t.lower() for t in tokens].index("extended") + 1
+        if "extended" in lower_tokens:
+            idx = lower_tokens.index("extended") + 1
             tokens = tokens[idx:]
-        elif "standard" in [t.lower() for t in tokens]:
-            idx = [t.lower() for t in tokens].index("standard") + 1
+        elif "standard" in lower_tokens:
+            idx = lower_tokens.index("standard") + 1
             tokens = tokens[idx:]
         else:
             # fallback: drop "access-list <name>"

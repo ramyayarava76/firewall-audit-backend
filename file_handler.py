@@ -7,6 +7,11 @@ from logger import get_logger
 logger = get_logger(__name__)
 
 SUPPORTED_EXTENSIONS = {".csv", ".json", ".txt"}
+_PARSER_BY_EXTENSION = {
+    ".txt": "_parse_txt",
+    ".csv": "_parse_csv",
+    ".json": "_parse_json",
+}
 
 
 def handle_uploaded_file(filename: str, content: bytes) -> List[str]:
@@ -25,22 +30,18 @@ def handle_uploaded_file(filename: str, content: bytes) -> List[str]:
     lower = filename.lower()
     
     try:
-        if lower.endswith(".txt"):
-            logger.debug(f"Parsing as TXT file: {filename}")
-            rules = _parse_txt(content)
-        elif lower.endswith(".csv"):
-            logger.debug(f"Parsing as CSV file: {filename}")
-            rules = _parse_csv(content)
-        elif lower.endswith(".json"):
-            logger.debug(f"Parsing as JSON file: {filename}")
-            rules = _parse_json(content)
-        else:
+        extension = next((ext for ext in SUPPORTED_EXTENSIONS if lower.endswith(ext)), None)
+        if extension is None:
             error_msg = (
                 f"Unsupported file type '{filename}'. Allowed extensions: "
                 + ", ".join(sorted(SUPPORTED_EXTENSIONS))
             )
             logger.error(error_msg)
             raise ValueError(error_msg)
+
+        parser_name = _PARSER_BY_EXTENSION[extension]
+        logger.debug(f"Parsing as {extension.upper()} file: {filename}")
+        rules = globals()[parser_name](content)
         
         logger.info(f"Successfully extracted {len(rules)} rules from {filename}")
         return rules
@@ -132,7 +133,6 @@ def _parse_json(content: bytes) -> List[str]:
                 if isinstance(value, str) and value.strip():
                     rules.append(value.strip())
             else:
-                logger.warning(f"JSON parsing: skipping element {i} of type {type(item).__name__}")
                 raise ValueError(
                     f"Each JSON element must be a string or an object with a 'rule' key; got {type(item).__name__}."
                 )
