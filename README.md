@@ -64,6 +64,83 @@ The API is available at `http://localhost:8000`. Interactive docs at `http://loc
 
 ---
 
+## Deployment Setup
+
+This repository is configured for deployment on Render using:
+
+- `render.yaml` (Render Blueprint)
+- `Procfile` (explicit web process command)
+- `.env.example` (template for runtime environment variables)
+
+### Production Start Command
+
+```bash
+uvicorn main:app --host 0.0.0.0 --port $PORT
+```
+
+Render injects the `PORT` environment variable automatically.
+
+### Environment Variables
+
+Set these in your Render service environment (or from Blueprint defaults):
+
+| Variable | Suggested Value |
+|----------|-----------------|
+| `PYTHON_VERSION` | `3.11.9` |
+| `LOG_LEVEL` | `INFO` |
+| `DETAILED_LOGS` | `false` |
+| `DISABLE_LOGGING` | `false` |
+| `DEBUG` | `false` |
+| `CORS_ORIGINS` | `["*"]` |
+
+Optional metadata values used by root endpoint:
+
+| Variable | Example |
+|----------|---------|
+| `APP_NAME` | `Firewall Audit Backend` |
+| `APP_VERSION` | `1.0.0` |
+| `USERNAME` | `ramyayarava76` |
+| `EMAIL` | `ramyayarava76@gmail.com` |
+
+---
+
+## Render Setup
+
+### Option A: Blueprint Deploy (recommended)
+
+1. Push this repository to GitHub.
+2. In Render, click **New +** -> **Blueprint**.
+3. Connect your GitHub repository.
+4. Render will detect `render.yaml` and create the `firewall-audit-backend` web service.
+5. Click **Apply** to deploy.
+
+### Option B: Manual Web Service
+
+1. In Render, click **New +** -> **Web Service**.
+2. Connect your repository and choose branch.
+3. Use:
+  - **Runtime:** Python
+  - **Build Command:** `pip install -r requirements.txt`
+  - **Start Command:** `uvicorn main:app --host 0.0.0.0 --port $PORT`
+4. Add environment variables from `.env.example`.
+5. Deploy.
+
+### Health Check
+
+Render health check path:
+
+```text
+/health
+```
+
+You should see a JSON response like:
+
+```json
+{"status":"healthy"}
+```
+
+---
+
 ## API Endpoints
 
 ### Upload
