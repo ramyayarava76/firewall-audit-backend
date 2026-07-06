@@ -64,6 +64,109 @@ The API is available at `http://localhost:8000`. Interactive docs at `http://loc
 
 ---
 
+## API Demo
+
+### 1) Health Check
+
+```bash
+curl http://localhost:8000/health
+```
+
+Expected response:
+
+```json
+{"status":"healthy"}
+```
+
+### 2) Dead Rule Detection (Cisco duplicate example)
+
+```bash
+curl -X POST http://localhost:8000/api/v1/audit/check-dead-rules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vendor": "cisco",
+    "rules": [
+      "access-list ACL1 extended permit tcp any host 10.0.0.10 eq 443",
+      "access-list ACL1 extended permit tcp any host 10.0.0.10 eq 443"
+    ]
+  }'
+```
+
+Expected response shape:
+
+```json
+{
+  "status": "success",
+  "data": {
+    "requested_vendor": "cisco",
+    "total_rules_analyzed": 2,
+    "dead_rules_count": 1,
+    "summary": {
+      "redundant_rules": 1
+    }
+  }
+}
+```
+
+### 3) Audit Summary
+
+```bash
+curl -X POST http://localhost:8000/api/v1/audit \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vendor": "cisco",
+    "rules": [
+      "access-list OUTSIDE-IN extended permit tcp any host 10.0.0.10 eq 443"
+    ]
+  }'
+```
+
+Expected response shape:
+
+```json
+{
+  "status": "success",
+  "data": {
+    "summary": {
+      "total_rules": 1,
+      "parsed_successfully": 1
+    }
+  }
+}
+```
+
+---
+
+## Screenshots / Demo
+
+Add your UI or API screenshots under `docs/screenshots/` using these names:
+
+- `docs/screenshots/swagger-docs.png`
+- `docs/screenshots/dead-rules-request.png`
+- `docs/screenshots/dead-rules-response.png`
+- `docs/screenshots/audit-summary-response.png`
+
+Once added, they will render below automatically:
+
+![Swagger Docs](docs/screenshots/swagger-docs.png)
+![Dead Rules Request](docs/screenshots/dead-rules-request.png)
+![Dead Rules Response](docs/screenshots/dead-rules-response.png)
+![Audit Summary Response](docs/screenshots/audit-summary-response.png)
+
+---
+
+## Task Status
+
+- [x] Implement dead-rule analysis engine (`rule_checker.py`)
+- [x] Add dead-rules API endpoints (`/api/v1/audit/check-dead-rules`)
+- [x] Add CSV reporting for audit/dead-rules output
+- [x] Add endpoint-level tests (`test_api_dead_rules.py`)
+- [x] Add parser/rule-checker tests (`test_rule_checker.py`, `test_rules.py`)
+- [x] Add deployment configuration (`render.yaml`, `Procfile`)
+- [x] Add README demo and screenshots section
+
+---
+
 ## Deployment Setup
 
 This repository is configured for deployment on Render using:
